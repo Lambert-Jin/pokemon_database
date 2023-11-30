@@ -1,0 +1,139 @@
+#! /usr/bin/env python3
+
+
+"""
+COMP3311
+23T1
+Assignment 2
+Pokemon Database
+
+Written by: <YOUR NAME HERE> <YOUR STUDENT ID HERE>
+Written on: <DATE HERE>
+
+Pokemon Density
+
+Find the density of pokemon in each location within a given region.
+"""
+
+
+import sys
+import psycopg2
+import helpers
+import math
+
+
+### Constants
+USAGE = f"Usage: {sys.argv[0]} <Region>"
+
+
+### Globals
+db = None
+Region = None
+
+
+
+
+### Command-line args
+if len(sys.argv) != 2:
+    print(USAGE, file=sys.stderr)
+    sys.exit(1)
+Region = helpers.clean(sys.argv[1])
+
+def get_pokemon_data(region): 
+    cur = db.cursor()
+    query = '''
+        SELECT l.Name, g.Name, p.name, e.Rarity, p.Average_Height, p.Average_Weight
+        FROM Locations l
+        JOIN Games g ON l.Appears_In = g.ID
+        LEFT JOIN Encounters e ON l.ID = e.Occurs_At
+        LEFT JOIN Pokemon p ON e.Occurs_With = p.ID
+        WHERE g.Region = %s;
+    '''
+    cur.execute(query, (region,))
+    return cur.fetchall()
+
+def calculate_density(pokemon_data):
+    densities = {}
+    no_encounters = set()
+
+    for location, game, name, rarity, height, weight in pokemon_data:
+        if rarity is not None and height is not None and weight is not None:
+            volume = (4.00 / 3.00) * math.pi * (height / 2) ** 3
+            density = (weight / volume) / 1000
+            scaled_density = (rarity / 100) * density
+            if (location, game) in densities:
+                densities[(location, game)] += scaled_density
+            else:
+                densities[(location, game)] = scaled_density
+
+    location_sums = {}
+
+    for (location, game), density_sum in densities.items():
+        if location in location_sums:
+            location_sums[location].append(density_sum)
+        else:
+            location_sums[location] = [density_sum]
+
+    average_densities = {}
+
+    for location, density_sums in location_sums.items():
+        if density_sums:
+            average_densities[location] = sum(density_sums) / len(density_sums)
+        else:
+            average_densities[location] = None
+
+    all_locations = set(location for location, _, _, _, _, _ in pokemon_data)
+    no_encounters = all_locations - set(average_densities.keys())
+    return average_densities, no_encounters
+
+
+def main():
+    found = False
+    cur = db.cursor()
+    cur.execute("select region from games")
+    results = cur.fetchall()
+    for result in results:
+        if Region in result:
+            found = True
+            break
+
+    if not found:
+        print(f"'{Region}' isn't a region in the Pokemon series." , file=sys.stderr)
+        return
+    
+    pokemon_data = get_pokemon_data(Region)
+    densities, no_encounters = calculate_density(pokemon_data)
+
+    print(f"The average density of Pokemon within each location in the '{Region}' region:\n")
+
+    def sort_key(item):
+        location, density = item
+        return (density is None, -density if density is not None else None, location)
+
+    sorted_densities = sorted(densities.items(), key=sort_key)
+
+    for location, density in sorted_densities:
+        if density is not None:
+            density = round(density, 4)
+            density = format(density, ".4f")
+            print(f"\t{location}: {' ' * (20 - len(location))}{density}")
+
+    print(f"\nThe following locations in the '{Region}' region have no wild Pokemon encounters:\n")
+    for location in sorted(no_encounters):
+        print(" " * 8, end="")
+        print(location)
+
+
+if __name__ == '__main__':
+    try:
+        db = psycopg2.connect(dbname="ass2")
+        main()
+    except psycopg2.Error as err:
+        print("DB error: ", err)
+    except Exception as err:
+        print("Internal Error: ", err)
+        raise err
+    finally:
+        if db is not None:
+            db.close()
+    sys.exit(0)

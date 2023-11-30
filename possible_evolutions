@@ -1,0 +1,241 @@
+#! /usr/bin/env python3
+
+
+"""
+COMP3311
+23T1
+Assignment 2
+Pokemon Database
+
+Written by: <YOUR NAME HERE> <YOUR STUDENT ID HERE>
+Written on: <DATE HERE>
+
+Possible Evolutions
+
+Given the name of a pokemon,
+display a list of all the pokemon that could evolve into the given pokemon,
+and a list of all the pokemon that the given pokemon could evolve into.
+"""
+
+
+import sys
+import psycopg2
+import helpers
+
+
+### Constants
+USAGE = f"Usage: {sys.argv[0]} <Pokemon Name>"
+
+
+### Globals
+db = None
+Pokemon_Name = None
+
+
+### Command-line args
+if len(sys.argv) != 2:
+    print(USAGE, file=sys.stderr)
+    sys.exit(1)
+Pokemon_Name = helpers.clean(sys.argv[1])
+
+
+
+def get_pre_evolutions(pokemon_name):
+    cur = db.cursor()
+    query = '''
+    SELECT P1.Name, P2.Name, e.id, 
+    string_agg(
+               CASE
+                   WHEN ER.Inverted THEN 'NOT ' || R.Assertion
+                   ELSE R.Assertion
+               END, ','
+               order by E.id, ER.Inverted, r.id
+           ) AS requirements
+    FROM Pokemon P1
+    JOIN Evolutions E ON P1.ID = E.Post_Evolution
+    JOIN Pokemon P2 ON E.Pre_Evolution = P2.ID
+    JOIN Evolution_Requirements ER ON E.ID = ER.Evolution
+    JOIN Requirements R ON ER.Requirement = R.ID
+    WHERE P1.Name = %s
+    group by p1.name, p2.name, e.id, (P2.ID).Pokedex_Number, (P2.ID).Variation_Number
+    ORDER BY (P2.ID).Pokedex_Number, (P2.ID).Variation_Number, E.ID, requirements;
+    '''
+    cur.execute(query, (pokemon_name,))
+    return cur.fetchall()
+
+def get_evolutions(pokemon_name):
+    cur = db.cursor()
+    query = '''
+    SELECT P1.Name, P2.Name, e.id, 
+    string_agg(
+               CASE
+                   WHEN ER.Inverted THEN 'NOT ' || R.Assertion
+                   ELSE R.Assertion
+               END, ','
+               order by E.id, ER.Inverted, r.id
+           ) AS requirements
+    FROM Pokemon P1
+    JOIN Evolutions E ON P1.ID = E.Pre_Evolution
+    JOIN Pokemon P2 ON E.Post_Evolution = P2.ID
+    JOIN Evolution_Requirements ER ON E.ID = ER.Evolution
+    JOIN Requirements R ON ER.Requirement = R.ID
+    WHERE P1.Name = %s
+    group by p1.name, p2.name, e.id, (P2.ID).Pokedex_Number, (P2.ID).Variation_Number
+    ORDER BY (P2.ID).Pokedex_Number, (P2.ID).Variation_Number, E.ID, requirements;
+    '''
+    cur.execute(query, (pokemon_name,))
+    return cur.fetchall()
+                        
+def print_pre_evolution(evolutions):
+    print(f"\t'{evolutions[0][1]}' when the following requirements are satisfied")
+    if len(evolutions) < 2:
+        req = evolutions[0][3].split(",")
+        print(f"\t\t\t{req[0]}")
+        if len(req) > 1:
+            subreq = req[1:]
+            for item in subreq:
+                print(f"\t\tAND")
+                print(f"\t\t\t{item}")
+    else:
+        req = evolutions[0][3].split(",")
+        print(f"\t\t\t\t{req[0]}")
+        if len(req) > 1:
+            subreq = req[1:]
+            for item in subreq:
+                print(f"\t\t\tAND")
+                print(f"\t\t\t\t{item}")
+
+        print(f"\t\tOR")
+
+        req = evolutions[0][3].split(",")
+        print(f"\t\t\t\t{req[0]}")
+        if len(req) > 1:
+            subreq = req[1:]
+            for item in subreq:
+                print(f"\t\t\tAND")
+                print(f"\t\t\t\t{item}")
+            
+
+def print_evolution(evolutions):
+    prev_evo = None
+    for i, data in enumerate(evolutions):
+        _, evo, _, requirements = data
+        requirements = requirements.split(',')
+        # requirements = sorted(requirements)
+
+        if evo!= prev_evo:
+            if prev_evo:
+                print()
+            print(f"\t'{evo}' when the following requirements are satisfied:")
+            prev_evo = evo
+            if i < len(evolutions) - 1 and evolutions[i + 1][1] == evo:
+                if len(requirements) > 1:
+                    print(f"\t\t\t\t{requirements[0]}")
+                    subreq = requirements[1:]
+                    for item in subreq:
+                        print(f"\t\t\tAND")
+                        print(f"\t\t\t\t{item}")
+                else:
+                    print(f"\t\t\t{requirements[0]}")
+
+                print(f"\t\tOR")
+            else:
+                if len(requirements) > 1:
+                    print(f"\t\t\t{requirements[0]}")
+                    subreq = requirements[1:]
+                    for item in subreq:
+                        print(f"\t\tAND")
+                        print(f"\t\t\t{item}")
+                else:
+                    print(f"\t\t{requirements[0]}")        
+        else:
+            if i < len(evolutions) - 1 and evolutions[i + 1][1] == evo:
+                    if len(requirements) > 1:
+                        print(f"\t\t\t\t{requirements[0]}")
+                        subreq = requirements[1:]
+                        for item in subreq:
+                            print(f"\t\t\tAND")
+                            print(f"\t\t\t\t{item}")
+                    else:
+                        print(f"\t\t\t{requirements[0]}")
+
+                    print(f"\t\tOR")           
+            else:
+                if len(requirements) > 1:
+                        print(f"\t\t\t\t{requirements[0]}")
+                        subreq = requirements[1:]
+                        for item in subreq:
+                            print(f"\t\t\tAND")
+                            print(f"\t\t\t\t{item}")
+                else:
+                    print(f"\t\t\t{requirements[0]}")
+
+
+
+# def print_evolution(data):
+#     print(f"{data[0][0]} can evolve into:")
+#     prev_evolution = None
+#     prev_requirement = None
+
+#     for i, entry in enumerate(data):
+#         _, evolution, _, requirements = entry
+#         requirements = requirements.split(',')
+
+#         if evolution != prev_evolution:
+#             if prev_evolution is not None:
+#                 print()
+#             print(f"    '{evolution}' when the following requirements are satisfied:")
+#             prev_evolution = evolution
+#             prev_requirement = None
+
+#         for idx, req in enumerate(requirements):
+#             if idx > 0:
+#                 print("\n        AND", end="")
+#             elif prev_requirement and (i < len(data) - 1 and data[i + 1][1] == evolution):
+#                 print("        OR", end="")
+#             print(f"\n        {req}", end="")
+#             prev_requirement = req
+
+#         if i == len(data) - 1 or data[i + 1][1] != evolution:
+#             print()
+
+            
+def main():
+    cur = db.cursor()
+    cur.execute("SELECT Name FROM Pokemon WHERE Name = %s", (Pokemon_Name,))
+    result = cur.fetchone()
+    if not result:
+        print(f"'{Pokemon_Name}' isn't a Pokemon that exists.",file=sys.stderr)
+        return
+    pre_evolutions = get_pre_evolutions(Pokemon_Name)
+    evolutions = get_evolutions(Pokemon_Name)
+
+    if pre_evolutions:
+        print(f"'{Pokemon_Name}' can evolve from:")
+        print_evolution(pre_evolutions)
+        print()
+    else:
+        print(f"'{Pokemon_Name}' doesn't have any pre-evolutions.\n")
+
+    if evolutions:
+        print(f"'{Pokemon_Name}' can evolve into:")
+        print_evolution(evolutions)
+    else:
+        print(f"'{Pokemon_Name}' doesn't have any post-evolutions.\n")
+
+    cur.close()
+
+
+if __name__ == '__main__':
+    try:
+        db = psycopg2.connect(dbname="ass2")
+        main()
+    except psycopg2.Error as err:
+        print("DB error: ", err)
+    except Exception as err:
+        print("Internal Error: ", err)
+        raise err
+    finally:
+        if db is not None:
+            db.close()
+    sys.exit(0)
